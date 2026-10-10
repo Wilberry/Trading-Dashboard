@@ -1,51 +1,73 @@
-# Trading Intelligence Dashboard
+# Meridian — Trading Intelligence Dashboard
 
-> Status: Product discovery and specification v0.1 — 10 October 2026  
-> Coverage: Forex pairs, XAUUSD, Bitcoin, Ethereum, and expandable crypto markets.
+> **Runnable research MVP (synthetic data only)** · October 2026
 
-An evidence-driven market intelligence terminal for active and swing traders. It gathers news, X, Truth Social, institutional research, economic releases, prices, macro and crypto market data; stores legally permissible history; connects events with affected assets; performs horizon-specific statistical analysis; and displays the essential conclusion before the details.
+Trading Dashboard is an evidence-driven research terminal for Forex pairs, XAUUSD, Bitcoin and Ethereum. The initial application implements a dark responsive interface, five-state statistical TradeMeter, separate Short-term/Mid-term/Long-term models, explicit expected relevance durations, key support/resistance and invalidation levels, filtered event research, stored pressure history, saved trade ideas and saved price-alert rules.
 
-**Purpose:** Research and decision support, not automated execution or guaranteed trade outcomes.
+**Not a live trading service.** All bundled price and news inputs are synthetic, the statistical model is not historically calibrated, and displayed Buy / Sell states are **not** actionable investment recommendations or probabilities of profit.
 
-## The product promise
+## Quick start
 
-A trader should know at a glance:
-- What changed in the market?
-- Which assets are affected?
-- What does the TradeMeter indicate for **Short-term**, **Mid-term**, or **Long-term**?
-- What is the **expected relevance duration** of the current directional bias?
-- Which support, resistance, invalidation, and catalyst levels should be watched?
-- What evidence and historical observations support the view?
+Requires Python 3.11+ and a browser. No pip packages or external services are required.
 
-## Six product principles
+```bash
+git clone https://github.com/Wilberry/Trading-Dashboard.git
+cd Trading-Dashboard
+python app.py
+```
 
-1. **Glance → Expand → Deep Dive.** No raw feed flooding the home screen.
-2. **Horizon-specific models.** Selecting a different horizon recalculates the TradeMeter, direction, duration, and levels.
-3. **Evidence-led TradeMeter.** Five outputs: Strong Sell, Sell, Neutral, Buy, Strong Buy. It reflects aggregated statistical evidence, not technical-analysis-only recommendations or literal order-flow pressure.
-4. **Market memory.** Retain permitted raw observations, normalized events, source provenance, features, trade ideas, model snapshots, revisions and measured outcomes.
-5. **Signal over noise.** Deduplicate related reporting, rank relevance, label unverified claims, surface meaningful changes.
-6. **No false precision.** An expected duration is a conditional research window, not a guaranteed forecast. Report staleness, missing inputs and statistical limitations.
+Open **http://127.0.0.1:8765/**. The app creates a local SQLite database (`data/trading.sqlite3`) on first startup and seeds deterministic demo candles and simulated market events. Leave the server running while you browse. Avoid exposing it to the public internet; it has no user authentication.
 
-## Specification index
+## Features
 
-- [01 — Product requirements](docs/01-product-requirements.md)
-- [02 — Dashboard UX and TradeMeter](docs/02-dashboard-ux-trademeter.md)
-- [03 — Data architecture, persistence and governance](docs/03-data-architecture.md)
-- [04 — Statistical methodology](docs/04-statistical-methodology.md)
-- [05 — News and social intelligence](docs/05-intelligence-ingestion.md)
-- [06 — MVP roadmap and acceptance criteria](docs/06-roadmap.md)
-- [07 — Decision log](docs/07-decisions.md)
+| Area | Implemented |
+| --- | --- |
+| Dashboard | Glance-first responsive layout, instrument selector, simulated price chart |
+| TradeMeter | Polished semicircular meter with green/red adaptive glow and Strong Sell / Sell / Neutral / Buy / Strong Buy |
+| Horizons | Separate statistical pressure calculations for Short-term, Mid-term, Long-term; explicit expected duration |
+| Levels | Horizon-specific support/resistance and thesis invalidation |
+| Intelligence | Event/feed storage and broad instrument impact annotations; demo source narratives |
+| Database | Persistent candles, events, permitted raw payloads, signal/evidence history, trade ideas and alert rules |
+| Research | Factor breakdowns and historical pressure snapshots |
+| Journaling | Save trade idea thesis, horizon, reference entry, invalidation and target |
+| Alerts | Save thresholds (no background price monitoring or notifications yet) |
+| Tests | Python smoke tests and GitHub Actions lint/test workflow |
 
-## Working horizon conventions
+## Project layout
 
-| Horizon | Research window | What must appear on screen |
-| --- | --- | --- |
-| Short-term | 1–3 trading days | Individual estimate, e.g. 2–3 trading days, plus levels and invalidation |
-| Mid-term | 2–6 weeks | Specific expected duration, levels and invalidation |
-| Long-term | 1–6 months+ | Specific expected duration, levels and invalidation |
+- `app.py` — dependency-free Python server, SQLite models, event ingestion and horizon-specific research.
+- `web/index.html`, `web/styles.css`, `web/app.js` — responsive terminal and interactions.
+- `tests/test_app.py` — smoke tests.
+- `docs/` — original product requirements, UX, ingestion, statistics and roadmap, plus current implementation status.
 
-The broad windows are **working conventions**, not hard-coded forecasts. Crypto's 24/7 schedule requires explicit calendar-day convention. All shown market figures in specs are fictional examples unless otherwise documented.
+## Run the checks
 
-## Status
+```bash
+python -m unittest discover -s tests -v
+python -m py_compile app.py
+node --check web/app.js
+```
 
-Initial documentation only. Vendor contracts, ingestion connectors, price data, statistical model validation and production code have **not** yet been implemented. Open design decisions are tracked in [the decision log](docs/07-decisions.md).
+Node is only needed for the optional JavaScript syntax check, not to run the application.
+
+## Ingestion API
+
+`GET /api/dashboard?symbol=EURUSD&horizon=short` returns the selected instrument, all horizon outputs, history, demo event feed, trade ideas and alert rules.
+
+`POST /api/ideas` and `POST /api/alerts` save local user research. `POST /api/ingest` accepts an authorized event with `source`, `external_id`, `title`, `rights` (one of `licensed`, `authorized`, `public-domain`, `metadata-only`), optional `body`, `timestamp`, `category`, `event_key`, and an `impacts` object mapping instrument symbols to a directional numeric annotation between -1 and +1.
+
+For administrator ingestion, set `TRADING_INGEST_TOKEN` in the environment and send the same value as the `X-Ingest-Token` HTTP header. Do not place credentials in Git.
+
+The ingestion endpoint is a **research adapter**, not an automatic X/Truth Social scraper, real market-price provider or reliable sentiment-extraction model. Provider-specific connectors, licensing, queues and anti-abuse controls are not implemented.
+
+## What remains before a production release
+
+1. Licensed/live sources for X, Truth Social, institutional commentary, economic calendars, broker/market quotes and historical backfill.
+2. Independently verified statistical feature engineering, out-of-sample calibration, duration estimation and level selection. The current weights and model outputs are placeholders.
+3. Secure authentication, user isolation, scalable time-series storage, source workers, audit and operational monitoring.
+4. Reliable live alerts/notifications, trade-idea outcomes and advanced market regime and crypto derivatives analytics.
+5. Browser/device accessibility QA, deployment, alert reliability tests, vendor/legal review and observability.
+
+See [implementation status](docs/08-implementation-status.md), [product specification](docs/01-product-requirements.md), [TradeMeter requirements](docs/02-dashboard-ux-trademeter.md), [statistical methodology](docs/04-statistical-methodology.md), and [roadmap](docs/06-roadmap.md).
+
+This project is for market research and decision support. It does not guarantee or promise profits.

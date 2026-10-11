@@ -124,12 +124,24 @@ class Handler(BaseHTTPRequestHandler):
             body=(Path(__file__).resolve().parent/"web"/name).read_bytes()
             self.send_response(200);self.send_header("Content-Type", "text/html" if path=="/" else "application/javascript" if path.endswith(".js") else "text/css")
             self.send_header("Content-Length",str(len(body)));self.end_headers();self.wfile.write(body);return
-        if path!="/api/dashboard":return self.sendjson({"error":"Not found"},404)
-        with connect() as c:self.sendjson(dashboard(c,query.get("symbol",["EURUSD"])[0],query.get("horizon",["short"])[0]))
+        if path not in ("/api/dashboard","/api/study"):return self.sendjson({"error":"Not found"},404)
+        try:
+            sym=query.get("symbol",["EURUSD"])[0]
+            horizon=query.get("horizon",["short"])[0]
+            if sym not in ASSETS or horizon not in HORIZONS:raise ValueError("Unsupported instrument/horizon")
+            with connect() as c:
+                result=dashboard(c,sym,horizon) if path=="/api/dashboard" else event_study(c,sym,horizon,demo=DATA_MODE=="demo")
+            self.sendjson(result)
+        except (ValueError,sqlite3.Error) as exc:self.sendjson({"error":str(exc)},400)
     def do_POST(self):
         path=urlparse(self.path).path
-        if path not in ("/api/ideas","/api/alerts","/api/ingest"):return self.sendjson({"error":"Not found"},404)
-        if path=="/api/ingest" and (not TOKEN or self.headers.get("X-Ingest-Token")!=TOKEN):return self.sendjson({"error":"Admin token required"},403)
+        if path not in ("/api/ideas","/api/alerts","/api/ingest","/api/bars"):return self.sendjson({"error":"Not found"},404)
+        if path in ("/api/ingest","/api/bars"):
+            if DATA_MODE!="live":return self.sendjson({"error":"Authorized imports require TRADING_DATA_MODE=live"},409)
+            if not TOKEN or not hmac.compare_digest(self.headers.get("X-Ingest-Token",""),TOKEN):
+                return self.sendjson({"error":"Admin token required"},403)
+        elif DATA_MODE=="live":
+            return self.sendjson({"error":"Personal writes disabled pending user authentication"},403)
         try:
             n=int(self.headers.get("Content-Length","0"))
             if not 1<=n<=100000:raise ValueError("Invalid request size")
@@ -143,12 +155,29 @@ class Handler(BaseHTTPRequestHandler):
                 elif path=="/api/alerts":
                     if d.get("symbol") not in ASSETS or d.get("comparison") not in ("above","below") or float(d.get("price",0))<=0:raise ValueError("Invalid price alert")
                     c.execute("INSERT INTO alerts(symbol,comparison,price,ts) VALUES(?,?,?,?)",(d["symbol"],d["comparison"],float(d["price"]),now()))
+                elif path=="/api/bars":
+                    if d.get("rights") not in ("licensed","authorized","public-domain"):
+                        raise ValueError("Explicit price data rights required")
+                    sym=d.get("symbol")
+                    if sym not in ASSETS:raise ValueError("Unsupported instrument")
+                    if not str(d.get("source","")).strip():raise ValueError("Price provider source required")
+                    price=float(d["close"])
+                    if not math.isfinite(price) or price<=0:raise ValueError("Close must be a finite positive number")
+                    stamp=parse_utc(d["timestamp"])
+                    if stamp>datetime.now(timezone.utc)+timedelta(minutes=5):
+                        raise ValueError("Future-dated price bar refused")
+                    c.execute("INSERT OR IGNORE INTO bars(symbol,ts,close,source,demo) VALUES(?,?,?,?,0)",
+                      (sym,stamp.isoformat(),price,str(d["source"])[:100]))
                 else:
                     if d.get("rights") not in ("licensed","authorized","public-domain","metadata-only"):raise ValueError("Explicit data rights required")
                     if not d.get("source") or not d.get("external_id") or not d.get("title"):raise ValueError("Source, ID and title required")
                     impacts=d.get("impacts",{})
                     if not isinstance(impacts,dict) or any(k not in ASSETS or not isinstance(v,(float,int)) or not -1<=v<=1 for k,v in impacts.items()):raise ValueError("Invalid impacts")
-                    key=str(d.get("event_key",d["external_id"]))[:120];stamp=str(d.get("timestamp",now()))
+                    key=str(d.get("event_key",d["external_id"]))[:120]
+                    stamp=parse_utc(d.get("timestamp",now()))
+                    if stamp>datetime.now(timezone.utc)+timedelta(minutes=5):
+                        raise ValueError("Future-dated social/news event refused")
+                    stamp=stamp.isoformat()
                     raw={k:d.get(k) for k in ("source","external_id","title","rights")} if d["rights"]=="metadata-only" else d
                     row=c.execute("SELECT id FROM events WHERE source=? AND external_id=?",(d["source"],d["external_id"])).fetchone()
                     if row:return self.sendjson({"duplicate":True,"id":row["id"]})
@@ -156,9 +185,10 @@ class Handler(BaseHTTPRequestHandler):
                     (d["source"],d["external_id"],str(d["title"])[:240],str(d.get("body",""))[:12000] if d["rights"]!="metadata-only" else "",key,str(d.get("category","social"))[:40],stamp,json.dumps(raw),d["rights"]))
                     for sym,val in impacts.items():c.execute("INSERT INTO evidence VALUES(?,?,?,?,?,?,?,0)",(cur.lastrowid,sym,d.get("category","social"),float(val),.8,key,stamp))
                 c.commit()
-                if path=="/api/ingest":
-                    for sym in impacts:
-                        for h in HORIZONS:store(c,calculate(c,sym,h))
+                if path in ("/api/ingest","/api/bars"):
+                    changed_symbols=impacts if path=="/api/ingest" else [sym]
+                    for instrument in changed_symbols:
+                        for h in HORIZONS:store(c,calculate(c,instrument,h))
             self.sendjson({"ok":True},201)
         except (ValueError,KeyError,TypeError,sqlite3.Error) as e:self.sendjson({"error":str(e)},400)
 def main():

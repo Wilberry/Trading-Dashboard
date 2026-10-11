@@ -1,11 +1,15 @@
 """Trading Dashboard research MVP. Run: python app.py (Python 3.11+)."""
-import json, math, os, random, sqlite3
+import hmac, json, math, os, random, sqlite3
+from research import event_study, parse_utc
 from datetime import datetime, timedelta, timezone
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
 
-DB=os.environ.get("TRADING_DB_PATH","data/trading.sqlite3")
+DATA_MODE=os.environ.get("TRADING_DATA_MODE","demo").lower()
+if DATA_MODE not in ("demo","live"):
+    raise ValueError("TRADING_DATA_MODE must be demo or live")
+DB=os.environ.get("TRADING_DB_PATH",f"data/trading_{DATA_MODE}.sqlite3")
 TOKEN=os.environ.get("TRADING_INGEST_TOKEN","")
 ASSETS={"EURUSD":1.1738,"GBPUSD":1.3421,"USDJPY":149.68,"XAUUSD":3992.5,"BTCUSD":112850,"ETHUSD":4395}
 HORIZONS={"short":("Short-term","2–3 trading days",7,1.3),"mid":("Mid-term","2–6 weeks",45,0.8),"long":("Long-term","1–6 months",180,0.45)}
@@ -22,6 +26,7 @@ def connect():
     CREATE TABLE IF NOT EXISTS alerts(id INTEGER PRIMARY KEY,symbol TEXT,comparison TEXT,price REAL,ts TEXT,active INTEGER DEFAULT 1);
     """);return c
 def seed(c):
+    if DATA_MODE!="demo":return
     if c.execute("SELECT COUNT(*) FROM bars").fetchone()[0]:return
     random.seed(20261010)
     t=datetime.now(timezone.utc)
@@ -47,7 +52,8 @@ def category(score):
     return "Strong Sell" if score<=19 else "Sell" if score<=39 else "Neutral" if score<=60 else "Buy" if score<=80 else "Strong Buy"
 def calculate(c,sym,h):
     name,duration,days,factor=HORIZONS[h]; t=datetime.now(timezone.utc);start=(t-timedelta(days=days)).isoformat()
-    rows=c.execute("SELECT * FROM evidence WHERE symbol=? AND ts>=? ORDER BY ts DESC",(sym,start)).fetchall()
+    flag=int(DATA_MODE=="demo")
+    rows=c.execute("SELECT * FROM evidence WHERE symbol=? AND demo=? AND ts>=? AND ts<=? ORDER BY ts DESC",(sym,flag,start,t.isoformat())).fetchall()
     seen=set(); grouped={};score_sum=0;weight_sum=0
     for r in rows:
         key=(r["event_key"],r["category"])
@@ -58,37 +64,54 @@ def calculate(c,sym,h):
         signed=weight*r["direction"];score_sum+=signed;weight_sum+=weight
         grouped[r["category"]]=grouped.get(r["category"],0)+signed
     adequate=len(seen)>=3 and weight_sum>=.5
-    score=max(0,min(100,round(50+42*score_sum/weight_sum))) if adequate else 50
-    label=category(score);direction="Bullish" if score>=61 else "Bearish" if score<=39 else "Neutral"
-    bars=c.execute("SELECT close FROM bars WHERE symbol=? ORDER BY ts DESC LIMIT ?",(sym,{"short":12,"mid":50,"long":180}[h])).fetchall()
-    prices=[x["close"] for x in bars];last=prices[0] if prices else ASSETS[sym]
-    support=min(prices) if prices else last;resistance=max(prices) if prices else last
-    inv=f"Below {support:.5f}" if direction=="Bullish" else f"Above {resistance:.5f}" if direction=="Bearish" else "Reassess after breakout"
+    score=max(0,min(100,round(50+42*score_sum/weight_sum))) if adequate else None
+    label=category(score) if score is not None else "Unavailable"
+    direction=("Bullish" if score>=61 else "Bearish" if score<=39 else "Neutral") if score is not None else "Insufficient data"
+    bars=c.execute("SELECT close FROM bars WHERE symbol=? AND demo=? AND ts<=? ORDER BY ts DESC LIMIT ?",(sym,flag,t.isoformat(),{"short":12,"mid":50,"long":180}[h])).fetchall()
+    prices=[x["close"] for x in bars]
+    support=min(prices) if prices and adequate else None
+    resistance=max(prices) if prices and adequate else None
+    inv=f"Below {support:.5f}" if support is not None and direction=="Bullish" else f"Above {resistance:.5f}" if resistance is not None and direction=="Bearish" else "Not estimated"
     return dict(symbol=sym,horizon=h,label=name,duration=duration,score=score,category=label,direction=direction,
-        support=round(support,5),resistance=round(resistance,5),invalidation=inv,
+        support=round(support,5) if support is not None else None,resistance=round(resistance,5) if resistance is not None else None,invalidation=inv,
         drivers={k:round(v/max(weight_sum,.00001)*42,1) for k,v in grouped.items()},
-        evidence_count=len(seen),model_version="research-baseline-0.1",demo=True,
-        status="UNCALIBRATED · SYNTHETIC DATA",timestamp=now())
+        evidence_count=len(seen),model_version="research-baseline-0.2",demo=bool(flag),
+        status=("UNCALIBRATED · SYNTHETIC DATA" if flag else "UNCALIBRATED · AUTHORIZED DATA") if adequate and prices else "INSUFFICIENT DATA — NO SIGNAL",timestamp=now())
 def store(c,s):
-    c.execute("INSERT INTO signals(symbol,horizon,ts,score,category,direction,duration,support,resistance,invalidation,drivers,evidence_count,model_version,demo) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
-    (s["symbol"],s["horizon"],s["timestamp"],s["score"],s["category"],s["direction"],s["duration"],s["support"],s["resistance"],s["invalidation"],json.dumps(s["drivers"]),s["evidence_count"],s["model_version"]))
+    c.execute("INSERT INTO signals(symbol,horizon,ts,score,category,direction,duration,support,resistance,invalidation,drivers,evidence_count,model_version,demo) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    (s["symbol"],s["horizon"],s["timestamp"],s["score"],s["category"],s["direction"],s["duration"],s["support"],s["resistance"],s["invalidation"],json.dumps(s["drivers"]),s["evidence_count"],s["model_version"],int(s["demo"])))
     c.commit()
 def latest(c,sym,h):
-    r=c.execute("SELECT * FROM signals WHERE symbol=? AND horizon=? ORDER BY id DESC LIMIT 1",(sym,h)).fetchone()
-    if not r:
+    flag=int(DATA_MODE=="demo")
+    r=c.execute("SELECT * FROM signals WHERE symbol=? AND horizon=? AND demo=? ORDER BY id DESC LIMIT 1",(sym,h,flag)).fetchone()
+    refresh={"short":300,"mid":3600,"long":21600}[h]
+    stamp=now()
+    newest_event=c.execute("SELECT MAX(ts) FROM evidence WHERE symbol=? AND demo=?",(sym,flag)).fetchone()[0]
+    newest_bar=c.execute("SELECT MAX(ts) FROM bars WHERE symbol=? AND demo=?",(sym,flag)).fetchone()[0]
+    should_update=not r or (parse_utc(stamp)-parse_utc(r["ts"])).total_seconds()>=refresh
+    if r:
+        should_update=should_update or any(
+            date and parse_utc(date)>parse_utc(r["ts"])
+            for date in (newest_event,newest_bar))
+    if should_update:
         s=calculate(c,sym,h);store(c,s);return s
+    adequate=(r["score"] is not None and r["support"] is not None)
     return dict(symbol=sym,horizon=h,label=HORIZONS[h][0],duration=r["duration"],score=r["score"],category=r["category"],direction=r["direction"],
       support=r["support"],resistance=r["resistance"],invalidation=r["invalidation"],drivers=json.loads(r["drivers"]),
-      evidence_count=r["evidence_count"],model_version=r["model_version"],demo=True,status="UNCALIBRATED · SYNTHETIC DATA",timestamp=r["ts"])
+      evidence_count=r["evidence_count"],model_version=r["model_version"],demo=bool(flag),
+      status=("UNCALIBRATED · SYNTHETIC DATA" if flag else "UNCALIBRATED · AUTHORIZED DATA") if adequate else "INSUFFICIENT DATA — NO SIGNAL",timestamp=r["ts"])
 def dashboard(c,sym,h):
     if sym not in ASSETS or h not in HORIZONS:raise ValueError("Unsupported instrument/horizon")
-    prices={s:[r["close"] for r in c.execute("SELECT close FROM bars WHERE symbol=? ORDER BY ts DESC LIMIT 45",(s,))][::-1] for s in ASSETS}
+    flag=int(DATA_MODE=="demo")
+    prices={s:[r["close"] for r in c.execute("SELECT close FROM bars WHERE symbol=? AND demo=? AND ts<=? ORDER BY ts DESC LIMIT 45",(s,flag,now()))][::-1] for s in ASSETS}
     signals={name:latest(c,sym,name) for name in HORIZONS}
-    feed=[dict(r) for r in c.execute("SELECT title,body,source,ts,kind FROM events ORDER BY ts DESC LIMIT 15")]
-    hist=[dict(r) for r in c.execute("SELECT ts,score,category FROM signals WHERE symbol=? AND horizon=? ORDER BY id DESC LIMIT 40",(sym,h))][::-1]
+    feed=[dict(r) for r in c.execute("SELECT title,body,source,ts,kind,rights,event_key,demo FROM events WHERE demo=? ORDER BY ts DESC LIMIT 15",(flag,))]
+    hist=[dict(r) for r in c.execute("SELECT ts,score,category FROM signals WHERE symbol=? AND horizon=? AND demo=? AND score IS NOT NULL ORDER BY id DESC LIMIT 40",(sym,h,flag))][::-1]
     return dict(symbol=sym,horizon=h,signal=signals[h],signals=signals,prices=prices,feed=feed,history=hist,
         instruments=list(ASSETS),alerts=[dict(r) for r in c.execute("SELECT * FROM alerts WHERE active=1 ORDER BY id DESC")],
-        ideas=[dict(r) for r in c.execute("SELECT * FROM ideas ORDER BY id DESC LIMIT 100")],mode="SYNTHETIC DEMO · RESEARCH ONLY")
+        ideas=[dict(r) for r in c.execute("SELECT * FROM ideas ORDER BY id DESC LIMIT 100")],
+        study={h:event_study(c,sym,h,demo=bool(flag)) for h in HORIZONS},
+        mode="SYNTHETIC DEMO · RESEARCH ONLY" if flag else "AUTHORIZED-DATA MODE · PROVIDERS NOT CONNECTED")
 class Handler(BaseHTTPRequestHandler):
     def sendjson(self,obj,status=200):
         body=json.dumps(obj,default=str).encode();self.send_response(status)

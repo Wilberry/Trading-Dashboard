@@ -110,7 +110,12 @@ def dashboard(c,sym,h):
     flag=int(DATA_MODE=="demo")
     prices={s:[r["close"] for r in c.execute("SELECT close FROM bars WHERE symbol=? AND demo=? AND ts<=? ORDER BY ts DESC LIMIT 45",(s,flag,now()))][::-1] for s in ASSETS}
     signals={name:latest(c,sym,name) for name in HORIZONS}
-    feed=[dict(r) for r in c.execute("SELECT title,body,source,ts,kind,rights,event_key,demo FROM events WHERE demo=? ORDER BY ts DESC LIMIT 15",(flag,))]
+    feed=[]
+    for r in c.execute("SELECT title,body,source,ts,kind,rights,event_key,demo,raw FROM events WHERE demo=? ORDER BY ts DESC LIMIT 15",(flag,)):
+        record=dict(r)
+        payload=json.loads(record.pop("raw") or "{}")
+        record["url"]=payload.get("url","")
+        feed.append(record)
     hist=[dict(r) for r in c.execute("SELECT ts,score,category FROM signals WHERE symbol=? AND horizon=? AND demo=? AND score IS NOT NULL ORDER BY id DESC LIMIT 40",(sym,h,flag))][::-1]
     return dict(symbol=sym,horizon=h,signal=signals[h],signals=signals,prices=prices,feed=feed,history=hist,
         instruments=list(ASSETS),alerts=[dict(r) for r in c.execute("SELECT * FROM alerts WHERE active=1 ORDER BY id DESC")],
@@ -186,7 +191,10 @@ class Handler(BaseHTTPRequestHandler):
                     if stamp>datetime.now(timezone.utc)+timedelta(minutes=5):
                         raise ValueError("Future-dated social/news event refused")
                     stamp=stamp.isoformat()
-                    raw={k:d.get(k) for k in ("source","external_id","title","rights")} if d["rights"]=="metadata-only" else d
+                    url=d.get("url","")
+                    if url and urlparse(str(url)).scheme!="https":
+                        raise ValueError("External source URL must be HTTPS")
+                    raw={k:d.get(k) for k in ("source","external_id","title","rights","url","timestamp","event_key","category")} if d["rights"]=="metadata-only" else d
                     row=c.execute("SELECT id FROM events WHERE source=? AND external_id=?",(d["source"],d["external_id"])).fetchone()
                     if row:return self.sendjson({"duplicate":True,"id":row["id"]})
                     cur=c.execute("INSERT INTO events(source,external_id,title,body,event_key,kind,ts,raw,rights,demo) VALUES(?,?,?,?,?,?,?,?,?,0)",

@@ -24,6 +24,7 @@ def connect():
     CREATE TABLE IF NOT EXISTS signals(id INTEGER PRIMARY KEY,symbol TEXT,horizon TEXT,ts TEXT,score INTEGER,category TEXT,direction TEXT,duration TEXT,support REAL,resistance REAL,invalidation TEXT,drivers TEXT,evidence_count INTEGER,model_version TEXT,demo INTEGER);
     CREATE TABLE IF NOT EXISTS ideas(id INTEGER PRIMARY KEY,symbol TEXT,horizon TEXT,direction TEXT,title TEXT,thesis TEXT,entry REAL,stop REAL,target REAL,ts TEXT);
     CREATE TABLE IF NOT EXISTS alerts(id INTEGER PRIMARY KEY,symbol TEXT,comparison TEXT,price REAL,ts TEXT,active INTEGER DEFAULT 1);
+    CREATE TABLE IF NOT EXISTS raw_market_data(id INTEGER PRIMARY KEY,symbol TEXT,ts TEXT,source TEXT,rights TEXT,payload TEXT,received_at TEXT,UNIQUE(symbol,ts,source));
     """);return c
 def seed(c):
     if DATA_MODE!="demo":return
@@ -69,6 +70,10 @@ def calculate(c,sym,h):
     direction=("Bullish" if score>=61 else "Bearish" if score<=39 else "Neutral") if score is not None else "Insufficient data"
     bars=c.execute("SELECT close FROM bars WHERE symbol=? AND demo=? AND ts<=? ORDER BY ts DESC LIMIT ?",(sym,flag,t.isoformat(),{"short":12,"mid":50,"long":180}[h])).fetchall()
     prices=[x["close"] for x in bars]
+    if not prices:
+        score=None;label="Unavailable";direction="Insufficient data"
+    if score is None:
+        duration="Not estimated"
     support=min(prices) if prices and adequate else None
     resistance=max(prices) if prices and adequate else None
     inv=f"Below {support:.5f}" if support is not None and direction=="Bullish" else f"Above {resistance:.5f}" if resistance is not None and direction=="Bearish" else "Not estimated"
@@ -166,8 +171,11 @@ class Handler(BaseHTTPRequestHandler):
                     stamp=parse_utc(d["timestamp"])
                     if stamp>datetime.now(timezone.utc)+timedelta(minutes=5):
                         raise ValueError("Future-dated price bar refused")
+                    src=str(d["source"])[:100]
                     c.execute("INSERT OR IGNORE INTO bars(symbol,ts,close,source,demo) VALUES(?,?,?,?,0)",
-                      (sym,stamp.isoformat(),price,str(d["source"])[:100]))
+                      (sym,stamp.isoformat(),price,src))
+                    c.execute("INSERT OR IGNORE INTO raw_market_data(symbol,ts,source,rights,payload,received_at) VALUES(?,?,?,?,?,?)",
+                      (sym,stamp.isoformat(),src,d["rights"],json.dumps(d,sort_keys=True),now()))
                 else:
                     if d.get("rights") not in ("licensed","authorized","public-domain","metadata-only"):raise ValueError("Explicit data rights required")
                     if not d.get("source") or not d.get("external_id") or not d.get("title"):raise ValueError("Source, ID and title required")
@@ -193,6 +201,7 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError,KeyError,TypeError,sqlite3.Error) as e:self.sendjson({"error":str(e)},400)
 def main():
     with connect() as c:seed(c)
+    print(f"DATA MODE: {DATA_MODE.upper()} (separate database: {DB})",flush=True)
     host=os.environ.get("HOST","127.0.0.1");port=int(os.environ.get("PORT","8765"))
     print(f"Trading Dashboard research demo: http://{host}:{port}",flush=True)
     ThreadingHTTPServer((host,port),Handler).serve_forever()

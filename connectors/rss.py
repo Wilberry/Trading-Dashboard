@@ -88,7 +88,7 @@ def ingest_feed(feed, *, api_url, token, dry_run=False):
     entries=parse_feed(fetch_xml(feed["url"]))
     count=0
     for entry in entries[:30]:
-        if entry["url"] and urlparse(entry["url"]).scheme not in ("https","http"):
+        if entry["url"] and urlparse(entry["url"]).scheme!="https":
             continue
         payload=dict(
             source=feed["name"],external_id=entry["external_id"],title=entry["title"],

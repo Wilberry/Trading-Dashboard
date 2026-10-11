@@ -21,3 +21,20 @@
 - No licensed historic backfill or out-of-sample statistical evaluation.
 
 The goal is not to misleadingly represent synthetic evidence as actual market signals. See development roadmap and decision log.
+
+## Research foundation extension (October 2026)
+
+Implemented in `feature/research-data-foundation`:
+
+- A distinct `TRADING_DATA_MODE=live` runtime and `data/trading_live.sqlite3` database; demo feed/bars do not contaminate authorized research.
+- Clear **Unavailable / Not estimated** states when historical evidence or closing-bar coverage is insufficient.
+- Append-only signal snapshots refreshed on new source inputs or horizon-specific freshness expiry.
+- A descriptive point-in-time event study with historical sample-size gates and event-key deduplication; **not similarity ranking or a validated projected return**.
+- Token-guarded authorized market-bar and source-event APIs with UTC timestamp checks, rights declarations, raw market payloads and source links.
+- Metadata-only RSS/Atom adapter and official-source sample config (requires operator review of source terms, startup in authorized mode, no automatic sentiment inference).
+- Research Lab event summaries, demo/live visual distinction, and no fictional upcoming-event panel in live mode.
+- Additional offline/HTTP integration tests. Their CI execution remains unverified while GitHub-hosted jobs terminate without an assigned runner.
+
+Still missing: approved X and Truth Social connectors, institutional research rights, automatically supplied live asset impact scoring, real-time forex/gold/crypto prices, economic calendar feeds, derived duration calibration, validated forward projection, source health monitors, authenticated user tenancy and deployed infrastructure. No real-money use should rely on current scoring.
+
+For local operations see [09-local-operations](09-local-operations.md).

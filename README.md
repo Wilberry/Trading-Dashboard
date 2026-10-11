@@ -60,6 +60,22 @@ For administrator ingestion, set `TRADING_INGEST_TOKEN` in the environment and s
 
 The ingestion endpoint is a **research adapter**, not an automatic X/Truth Social scraper, real market-price provider or reliable sentiment-extraction model. Provider-specific connectors, licensing, queues and anti-abuse controls are not implemented.
 
+## Research-data foundation (development branch)
+
+An extended implementation is available on `feature/research-data-foundation`. This includes:
+
+- Separate databases and query filtering for **synthetic demo** vs **authorized data**. Live mode starts empty instead of inventing market results.
+- Append-only pressure signal refresh after new observations or the horizon-specific TTL.
+- Point-in-time, descriptive event-study statistics (sample count, median, return quartiles, positive fraction), deduplicated by canonical event.
+- Authorized, token-protected news and closing-price ingestion, with timestamp validation, rights metadata and original-source provenance.
+- A manually configured, rights-aware **RSS/Atom metadata importer** with an official Federal Reserve feed example. X, Truth Social, institutional news and market-price providers still require agreements and integration.
+- Live-mode browser is read-only pending real account authentication; synthetic risk/calendar content is hidden.
+- Additional offline regression and HTTP API tests.
+
+**Research caveat:** The current TradeMeter is still an uncalibrated baseline, not a prediction model. The stated durations are working display conventions rather than statistically calibrated validity windows. Historical event studies describe aggregate event reactions, not similarity-ranked projections.
+
+See [authorized-data operations](docs/09-local-operations.md).
+
 ## What remains before a production release
 
 1. Licensed/live sources for X, Truth Social, institutional commentary, economic calendars, broker/market quotes and historical backfill.

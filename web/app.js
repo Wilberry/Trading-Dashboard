@@ -4,6 +4,7 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 const state={symbol:'EURUSD',horizon:'short',page:'overview',data:null};
 const fmt=n=>n==null?'—':Number(n).toLocaleString('en-US',{maximumFractionDigits:5});
 const cls=s=>/sell|bear/i.test(s)?'sell':/buy|bull/i.test(s)?'buy':'neutral';
+const sourceLink=u=>typeof u==='string'&&/^https:\/\/[^\s"'<>]+$/i.test(u)?'<a href="'+e(u)+'" target="_blank" rel="noopener noreferrer">Read original ↗</a>':'';
 const tm=s=>new Date(s).toLocaleString('en-GB',{timeZone:'UTC',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})+' UTC';
 const request=async(url,opt)=>{const r=await fetch(url,opt),v=await r.json();if(!r.ok)throw Error(v.error||'Server error');return v};
 function toast(msg){$('toast').textContent=msg;$('toast').classList.add('show');setTimeout(()=>$('toast').classList.remove('show'),3200)}
@@ -32,9 +33,9 @@ function overview(d){
  $('chartPrice').textContent=fmt(last);$('chart').innerHTML=graph(px,delta==null||delta>=0?'#2ce0ac':'#f16a7b');
  $('levelHorizon').textContent=s.label.toUpperCase();$('levels').innerHTML='<div class="level"><span>Resistance</span><b class="sell">'+fmt(s.resistance)+'</b></div><div class="level"><span>Current price</span><b>'+fmt(last)+'</b></div><div class="level"><span>Support</span><b class="buy">'+fmt(s.support)+'</b></div>';
  $('invalidation').textContent=s.invalidation;
- const news=x=>'<div class="news-row"><div><h3>'+e(x.title)+'</h3><p>'+e(x.source)+' · '+tm(x.ts)+' · synthetic</p></div><span>↗</span></div>';
+ const news=x=>'<div class="news-row"><div><h3>'+e(x.title)+'</h3><p>'+e(x.source)+' · '+tm(x.ts)+' · '+(x.demo?'synthetic':'authorized metadata')+'</p></div>'+sourceLink(x.url)+'</div>';
  $('news').innerHTML=d.feed.slice(0,3).map(news).join('');
- $('newsAll').innerHTML=d.feed.map(x=>'<div class="news-row"><div><h3>'+e(x.title)+'</h3><p>'+e(x.body)+'</p><p>'+e(x.kind)+' · '+tm(x.ts)+'</p></div></div>').join('');
+ $('newsAll').innerHTML=d.feed.map(x=>'<div class="news-row"><div><h3>'+e(x.title)+'</h3><p>'+e(x.body)+'</p><p>'+e(x.kind)+' · '+tm(x.ts)+' · '+e(x.rights)+'</p></div>'+sourceLink(x.url)+'</div>').join('')||'<p class="note">No authorized source records imported yet.</p>';
  $('marketRows').innerHTML=d.instruments.map(x=>{let v=d.prices[x],a=v.at(-1),b=v.at(-2)||a,pct=Number.isFinite(a)&&Number.isFinite(b)?(a/b-1)*100:null;return '<div class="market-row"><strong>'+e(x)+'</strong><span>'+fmt(a)+'</span><b class="'+(pct==null?'neutral':pct>=0?'buy':'sell')+'">'+(pct==null?'NO QUOTE':(pct>=0?'+':'')+pct.toFixed(2)+'%')+'</b><button data-symbol="'+e(x)+'">Analyze ↗</button></div>'}).join('');
  $('history').innerHTML=graph(d.history.map(r=>r.score).filter(v=>v!=null),'#91a7ff');
  const study=d.study[state.horizon];

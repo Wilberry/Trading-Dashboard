@@ -3,6 +3,7 @@ import hmac, json, math, os, random, sqlite3
 from research import event_study, parse_utc
 from datetime import datetime, timedelta, timezone
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from contextlib import closing
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
 
@@ -57,7 +58,7 @@ def calculate(c,sym,h):
     rows=c.execute("SELECT * FROM evidence WHERE symbol=? AND demo=? AND ts>=? AND ts<=? ORDER BY ts DESC",(sym,flag,start,t.isoformat())).fetchall()
     seen=set(); grouped={};score_sum=0;weight_sum=0
     for r in rows:
-        key=(r["event_key"],r["category"])
+        key=r["event_key"]
         if key in seen:continue
         seen.add(key)
         age=(t-datetime.fromisoformat(r["ts"])).total_seconds()/86400
@@ -111,11 +112,19 @@ def dashboard(c,sym,h):
     prices={s:[r["close"] for r in c.execute("SELECT close FROM bars WHERE symbol=? AND demo=? AND ts<=? ORDER BY ts DESC LIMIT 45",(s,flag,now()))][::-1] for s in ASSETS}
     signals={name:latest(c,sym,name) for name in HORIZONS}
     feed=[]
-    for r in c.execute("SELECT title,body,source,ts,kind,rights,event_key,demo,raw FROM events WHERE demo=? ORDER BY ts DESC LIMIT 15",(flag,)):
+    canonical={}
+    for r in c.execute("SELECT title,body,source,ts,kind,rights,event_key,demo,raw FROM events WHERE demo=? ORDER BY ts DESC LIMIT 150",(flag,)):
         record=dict(r)
         payload=json.loads(record.pop("raw") or "{}")
         record["url"]=payload.get("url","")
-        feed.append(record)
+        key=record["event_key"]
+        if key not in canonical:
+            record["sources"]=[record["source"]]
+            canonical[key]=record
+            feed.append(record)
+        elif record["source"] not in canonical[key]["sources"]:
+            canonical[key]["sources"].append(record["source"])
+        if len(feed)>=15 and key not in canonical:break
     hist=[dict(r) for r in c.execute("SELECT ts,score,category FROM signals WHERE symbol=? AND horizon=? AND demo=? AND score IS NOT NULL ORDER BY id DESC LIMIT 40",(sym,h,flag))][::-1]
     return dict(symbol=sym,horizon=h,signal=signals[h],signals=signals,prices=prices,feed=feed,history=hist,
         instruments=list(ASSETS),alerts=[dict(r) for r in c.execute("SELECT * FROM alerts WHERE active=1 ORDER BY id DESC")],
@@ -139,7 +148,7 @@ class Handler(BaseHTTPRequestHandler):
             sym=query.get("symbol",["EURUSD"])[0]
             horizon=query.get("horizon",["short"])[0]
             if sym not in ASSETS or horizon not in HORIZONS:raise ValueError("Unsupported instrument/horizon")
-            with connect() as c:
+            with closing(connect()) as c:
                 result=dashboard(c,sym,horizon) if path=="/api/dashboard" else event_study(c,sym,horizon,demo=DATA_MODE=="demo")
             self.sendjson(result)
         except (ValueError,sqlite3.Error) as exc:self.sendjson({"error":str(exc)},400)
@@ -208,7 +217,7 @@ class Handler(BaseHTTPRequestHandler):
             self.sendjson({"ok":True},201)
         except (ValueError,KeyError,TypeError,sqlite3.Error) as e:self.sendjson({"error":str(e)},400)
 def main():
-    with connect() as c:seed(c)
+    with closing(connect()) as c:seed(c)
     print(f"DATA MODE: {DATA_MODE.upper()} (separate database: {DB})",flush=True)
     host=os.environ.get("HOST","127.0.0.1");port=int(os.environ.get("PORT","8765"))
     print(f"Trading Dashboard research demo: http://{host}:{port}",flush=True)

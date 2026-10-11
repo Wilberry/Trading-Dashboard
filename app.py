@@ -71,18 +71,19 @@ def calculate(c,sym,h):
     direction=("Bullish" if score>=61 else "Bearish" if score<=39 else "Neutral") if score is not None else "Insufficient data"
     bars=c.execute("SELECT close FROM bars WHERE symbol=? AND demo=? AND ts<=? ORDER BY ts DESC LIMIT ?",(sym,flag,t.isoformat(),{"short":12,"mid":50,"long":180}[h])).fetchall()
     prices=[x["close"] for x in bars]
-    if not prices:
+    required_bars={"short":6,"mid":20,"long":60}[h]
+    if len(prices)<required_bars or not adequate:
         score=None;label="Unavailable";direction="Insufficient data"
     if score is None:
         duration="Not estimated"
-    support=min(prices) if prices and adequate else None
-    resistance=max(prices) if prices and adequate else None
+    support=min(prices) if score is not None else None
+    resistance=max(prices) if score is not None else None
     inv=f"Below {support:.5f}" if support is not None and direction=="Bullish" else f"Above {resistance:.5f}" if resistance is not None and direction=="Bearish" else "Not estimated"
     return dict(symbol=sym,horizon=h,label=name,duration=duration,score=score,category=label,direction=direction,
         support=round(support,5) if support is not None else None,resistance=round(resistance,5) if resistance is not None else None,invalidation=inv,
         drivers={k:round(v/max(weight_sum,.00001)*42,1) for k,v in grouped.items()},
         evidence_count=len(seen),model_version="research-baseline-0.2",demo=bool(flag),
-        status=("UNCALIBRATED · SYNTHETIC DATA" if flag else "UNCALIBRATED · AUTHORIZED DATA") if adequate and prices else "INSUFFICIENT DATA — NO SIGNAL",timestamp=now())
+        status=("UNCALIBRATED · SYNTHETIC DATA" if flag else "UNCALIBRATED · AUTHORIZED DATA") if score is not None else "INSUFFICIENT DATA — NO SIGNAL",timestamp=now())
 def store(c,s):
     c.execute("INSERT INTO signals(symbol,horizon,ts,score,category,direction,duration,support,resistance,invalidation,drivers,evidence_count,model_version,demo) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     (s["symbol"],s["horizon"],s["timestamp"],s["score"],s["category"],s["direction"],s["duration"],s["support"],s["resistance"],s["invalidation"],json.dumps(s["drivers"]),s["evidence_count"],s["model_version"],int(s["demo"])))
@@ -124,7 +125,7 @@ def dashboard(c,sym,h):
             feed.append(record)
         elif record["source"] not in canonical[key]["sources"]:
             canonical[key]["sources"].append(record["source"])
-        if len(feed)>=15 and key not in canonical:break
+    feed=feed[:15]
     hist=[dict(r) for r in c.execute("SELECT ts,score,category FROM signals WHERE symbol=? AND horizon=? AND demo=? AND score IS NOT NULL ORDER BY id DESC LIMIT 40",(sym,h,flag))][::-1]
     return dict(symbol=sym,horizon=h,signal=signals[h],signals=signals,prices=prices,feed=feed,history=hist,
         instruments=list(ASSETS),alerts=[dict(r) for r in c.execute("SELECT * FROM alerts WHERE active=1 ORDER BY id DESC")],

@@ -1,0 +1,11 @@
+{
+  "_note": "Example official RSS metadata sources. Review source usage/retention terms before enabling. Social X/Truth Social require separate approved providers.",
+  "feeds": [
+    {
+      "name": "Federal Reserve Board",
+      "url": "https://www.federalreserve.gov/feeds/press_all.xml",
+      "rights": "metadata-only",
+      "category": "official"
+    }
+  ]
+}

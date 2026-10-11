@@ -13,27 +13,35 @@ function graph(vals,col='#2ce0ac'){if(vals.length<2)return '<p class="note">Hist
  const p=pts.map(x=>x.join(',')).join(' ');return '<svg class="graph" preserveAspectRatio="none" viewBox="0 0 690 210" aria-label="historical graph"><line x1="20" x2="670" y1="105" y2="105" stroke="#2b3e52" stroke-dasharray="4 6"/><polyline points="'+p+'" fill="none" stroke="'+col+'" stroke-width="3" stroke-linejoin="round"/><circle cx="'+pts.at(-1)[0]+'" cy="'+pts.at(-1)[1]+'" r="5" fill="'+col+'"/></svg>'}
 function factors(data){return Object.entries(data).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).map(([k,v])=>'<div class="factor"><header><span>'+e(k.toUpperCase())+'</span><b class="'+(v>=0?'buy':'sell')+'">'+(v>0?'+':'')+v.toFixed(1)+' pts</b></header><i><span class="'+(v<0?'neg':'')+'" style="width:'+Math.min(100,Math.abs(v)*3)+'%"></span></i></div>').join('')}
 function meter(s){
- $('score').textContent=s.score;$('category').textContent=s.category.toUpperCase();
+ $('score').textContent=s.score==null?'—':s.score;$('category').textContent=s.category.toUpperCase();
  const tone=cls(s.category),col=tone==='buy'?'#2ce0ac':tone==='sell'?'#f16a7b':'#9eacbe';
  $('category').setAttribute('fill',col);$('shine').setAttribute('stroke',col);
- $('needle').setAttribute('transform','rotate('+(s.score*1.8-90)+' 180 167)');
+ $('needle').setAttribute('transform','rotate('+((s.score==null?50:s.score)*1.8-90)+' 180 167)');
  $('meterNote').textContent=s.evidence_count+' independent events · '+s.status;
  $('drivers').innerHTML=factors(s.drivers);$('researchDrivers').innerHTML=factors(s.drivers);
  document.querySelectorAll('[data-h]').forEach(b=>b.classList.toggle('active',b.dataset.h===state.horizon));
 }
 function overview(d){
- let s=d.signal,px=d.prices[d.symbol],last=px.at(-1),prev=px.at(-2)||last,delta=(last/prev-1)*100;
- $('quote').textContent=fmt(last);$('quoteChange').textContent=(delta>=0?'+':'')+delta.toFixed(2)+'%';
- $('quoteChange').className=delta>=0?'positive':'negative';$('symbol').value=d.symbol;
+ let s=d.signal,px=d.prices[d.symbol],last=px.at(-1),prev=px.at(-2)||last,delta=Number.isFinite(last)&&Number.isFinite(prev)?(last/prev-1)*100:null;
+ $('quote').textContent=fmt(last);$('quoteChange').textContent=delta==null?'NO QUOTE':(delta>=0?'+':'')+delta.toFixed(2)+'%';
+ $('quoteChange').className=delta!=null&&delta>=0?'positive':'neutral';$('symbol').value=d.symbol;
+ const live=!d.mode.startsWith('SYNTHETIC');
+ $('modeBanner').innerHTML=live?'<b>AUTHORIZED-DATA MODE</b> No data provider is connected automatically. TradeMeter remains unavailable until enough authorized evidence and price history exist.':'<b>DEMO DATA</b> All prices, events and TradeMeter scores are synthetic and unvalidated. Not trading signals.';
+ $('newIdea').disabled=live;$('newIdea').title=live?'Requires user authentication (not yet implemented)':'';
  meter(s);$('horizonRows').innerHTML=Object.values(d.signals).map(x=>'<div class="horizon-row"><div><h3>'+e(x.label.toUpperCase())+'</h3><p>Expected relevance: <strong>'+e(x.duration)+'</strong></p></div><b class="'+cls(x.direction)+'">● '+e(x.direction.toUpperCase())+'</b></div>').join('');
- $('chartPrice').textContent=fmt(last);$('chart').innerHTML=graph(px,delta>=0?'#2ce0ac':'#f16a7b');
+ $('chartPrice').textContent=fmt(last);$('chart').innerHTML=graph(px,delta==null||delta>=0?'#2ce0ac':'#f16a7b');
  $('levelHorizon').textContent=s.label.toUpperCase();$('levels').innerHTML='<div class="level"><span>Resistance</span><b class="sell">'+fmt(s.resistance)+'</b></div><div class="level"><span>Current price</span><b>'+fmt(last)+'</b></div><div class="level"><span>Support</span><b class="buy">'+fmt(s.support)+'</b></div>';
  $('invalidation').textContent=s.invalidation;
  const news=x=>'<div class="news-row"><div><h3>'+e(x.title)+'</h3><p>'+e(x.source)+' · '+tm(x.ts)+' · synthetic</p></div><span>↗</span></div>';
  $('news').innerHTML=d.feed.slice(0,3).map(news).join('');
  $('newsAll').innerHTML=d.feed.map(x=>'<div class="news-row"><div><h3>'+e(x.title)+'</h3><p>'+e(x.body)+'</p><p>'+e(x.kind)+' · '+tm(x.ts)+'</p></div></div>').join('');
- $('marketRows').innerHTML=d.instruments.map(x=>{let v=d.prices[x],a=v.at(-1),b=v.at(-2)||a,pct=(a/b-1)*100;return '<div class="market-row"><strong>'+e(x)+'</strong><span>'+fmt(a)+'</span><b class="'+(pct>=0?'buy':'sell')+'">'+(pct>=0?'+':'')+pct.toFixed(2)+'%</b><button data-symbol="'+e(x)+'">Analyze ↗</button></div>'}).join('');
- $('history').innerHTML=graph(d.history.map(r=>r.score),'#91a7ff');
+ $('marketRows').innerHTML=d.instruments.map(x=>{let v=d.prices[x],a=v.at(-1),b=v.at(-2)||a,pct=Number.isFinite(a)&&Number.isFinite(b)?(a/b-1)*100:null;return '<div class="market-row"><strong>'+e(x)+'</strong><span>'+fmt(a)+'</span><b class="'+(pct==null?'neutral':pct>=0?'buy':'sell')+'">'+(pct==null?'NO QUOTE':(pct>=0?'+':'')+pct.toFixed(2)+'%')+'</b><button data-symbol="'+e(x)+'">Analyze ↗</button></div>'}).join('');
+ $('history').innerHTML=graph(d.history.map(r=>r.score).filter(v=>v!=null),'#91a7ff');
+ const study=d.study[state.horizon];
+ const detail=study.sufficient
+  ?'<div class="study-metrics"><div><small>HISTORICAL MATCHES</small><strong>'+study.count+'</strong></div><div><small>MEDIAN RETURN</small><strong class="'+(study.median_return_pct>=0?'buy':'sell')+'">'+study.median_return_pct+'%</strong></div><div><small>POSITIVE OUTCOMES</small><strong>'+(study.positive_fraction*100).toFixed(1)+'%</strong></div><div><small>MIDDLE 50% RANGE</small><strong>'+study.p25_return_pct+'% to '+study.p75_return_pct+'%</strong></div></div>'
+  :'<p class="note">Insufficient comparable completed outcomes ('+study.count+' found; minimum '+study.min_sample+'). Do not infer a bias from this study.</p>';
+ $('study').innerHTML='<p class="note">'+e(study.status)+' · '+study.observations_forward+' subsequent stored daily closes · '+e(d.symbol)+'</p>'+detail;
  $('ideaRows').innerHTML=d.ideas.map(x=>'<div class="idea-row"><div><h3>'+e(x.title)+' · '+e(x.symbol)+'</h3><p>'+e(x.thesis)+'</p><p>'+e(x.horizon)+' / '+e(x.direction)+' · '+tm(x.ts)+' · entry '+fmt(x.entry)+' · stop '+fmt(x.stop)+' · target '+fmt(x.target)+'</p></div></div>').join('')||'<p class="note">No trade ideas recorded. Create one to preserve your hypothesis.</p>';
  $('alertRows').innerHTML=d.alerts.map(x=>'<div class="alert-row"><strong>'+e(x.symbol)+' '+e(x.comparison)+' '+fmt(x.price)+'</strong><span class="note">Rule stored, not actively monitored</span></div>').join('')||'<p class="note">No alert rules saved.</p>';
 }

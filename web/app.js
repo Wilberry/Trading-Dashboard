@@ -29,6 +29,10 @@ function overview(d){
  const live=!d.mode.startsWith('SYNTHETIC');
  $('modeBanner').innerHTML=live?'<b>AUTHORIZED-DATA MODE</b> No data provider is connected automatically. TradeMeter remains unavailable until enough authorized evidence and price history exist.':'<b>DEMO DATA</b> All prices, events and TradeMeter scores are synthetic and unvalidated. Not trading signals.';
  $('newIdea').disabled=live;$('newIdea').title=live?'Requires user authentication (not yet implemented)':'';
+ document.querySelectorAll('[data-goto="createIdea"],[data-goto="createAlert"]').forEach(b=>{b.disabled=live;b.title=live?'User authentication is required for personal data':''});
+ $('chartTag').textContent=live?'STORED AUTHORIZED CLOSES':'SYNTHETIC DAILY';
+ $('chartNote').textContent=live?'Last 45 stored closes · availability depends on imported provider data':'Last 45 stored closes · simulated prices';
+ $('riskRadar').hidden=live;
  meter(s);$('horizonRows').innerHTML=Object.values(d.signals).map(x=>'<div class="horizon-row"><div><h3>'+e(x.label.toUpperCase())+'</h3><p>Expected relevance: <strong>'+e(x.duration)+'</strong></p></div><b class="'+cls(x.direction)+'">● '+e(x.direction.toUpperCase())+'</b></div>').join('');
  $('chartPrice').textContent=fmt(last);$('chart').innerHTML=graph(px,delta==null||delta>=0?'#2ce0ac':'#f16a7b');
  $('levelHorizon').textContent=s.label.toUpperCase();$('levels').innerHTML='<div class="level"><span>Resistance</span><b class="sell">'+fmt(s.resistance)+'</b></div><div class="level"><span>Current price</span><b>'+fmt(last)+'</b></div><div class="level"><span>Support</span><b class="buy">'+fmt(s.support)+'</b></div>';
